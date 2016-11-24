@@ -4,7 +4,7 @@ Python script which provides the deploy-functionality for Bitbucket's Pipelines
 
 ## HOWTO
 
-1. Add `PipelinesDeployBitbucket.py` to the root of your repo (there is no PYPI package.. [see #2](issues/2) )
+1. Add `PipelinesDeployBitbucket.py` to the root of your repo (there is no PYPI package.. [see #2](../../issues/2) )
 2. Modify your `bitbucket-pipelines.yml`
 
 ```yaml
