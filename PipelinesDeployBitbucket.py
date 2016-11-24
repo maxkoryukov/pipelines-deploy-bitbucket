@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
+
+Original REPO:
+https://github.com/maxkoryukov/pipelines-deploy-bitbucket
+
 Simple deployment script from Bitbucket Pipelines to Bitbucket Downloads
 
 I don't know why Bitbucket Dev team did not include this in Pipeline
@@ -34,9 +38,8 @@ THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 import os
-import re
-import urllib3.contrib.pyopenssl
-urllib3.contrib.pyopenssl.inject_into_urllib3()
+#import urllib3.contrib.pyopenssl
+#urllib3.contrib.pyopenssl.inject_into_urllib3()
 from requests.auth import HTTPBasicAuth
 # import certifi
 # import urllib3
@@ -46,15 +49,22 @@ from requests.auth import HTTPBasicAuth
 # )
 import requests
 #import argparse
+
+
+# pipelines lib
+import re
+import yaml
+from fnmatch import fnmatch
 from subprocess import Popen, PIPE
+
+
 try:
 	import dotenv
-	useDotEnv = True
 except ImportError:
-	useDotEnv = False
+	dotenv = None
 
-__title__ = 'PipelineDeployBitbucket'
-__version__ = '0.1.0'
+__title__ = 'PipelinesDeployBitbucket'
+__version__ = '0.2.0'
 #__build__ = 0x021101
 __author__ = 'Maksim Koryukov'
 __license__ = 'MIT'
@@ -68,7 +78,7 @@ class DeployError(Exception):
 def gitGetTagName(commitHash):
 	cmd = ['git', 'name-rev', commitHash, '--name-only']
 
-	print ' '.join(cmd)
+	#print ' '.join(cmd)
 	pr = Popen(cmd, shell=False, stdout=PIPE, stderr=PIPE)
 	(out, err) = pr.communicate()
 	if err:
@@ -80,13 +90,113 @@ def gitGetTagName(commitHash):
 	return tag
 
 
+def pipelinesGlobMatch(glob, name):
+	if glob == name:
+		return True
+
+	if not glob:
+		return False
+
+	if not name:
+		return False
+
+	globTokens = glob.split('/')
+	nameTokens = name.split('/')
+	i = 0
+	gl = len(globTokens)
+	nl = len(nameTokens)
+	while True:
+		if globTokens[i] == '**':
+			return True
+		if nameTokens[i].strip() == '' and globTokens[i] == '*':
+			return False
+		if not fnmatch(nameTokens[i], globTokens[i]):
+			return False
+		i += 1
+		if i >= gl or i >= nl:
+			return gl==nl
+	return True
+
+
+def pipelenesSearchDeploySettingsInSteps(cfgStepList, gitName):
+	for node in cfgStepList:
+		for stepType, stepCfg in node.viewitems():
+			if stepType == 'deploy':
+				return stepCfg
+	return None
+
+
+def pipelenesSearchDeploySettingsInBlock(cfgNode, gitName):
+
+	cfgFound = False
+	# week point: need to search LONGEST match, not the first (should be in sync with pipelines config searcher)
+	for tagPattern, cfgStepList in cfgNode.viewitems():
+		if pipelinesGlobMatch(tagPattern, gitName): # tagPattern matches
+			cfg = pipelenesSearchDeploySettingsInSteps(cfgStepList, gitName)
+			if cfg is not None:
+				return cfg
+	return None
+
+
+def pipelinesSearchDeploySettings(currentTag, currentBranch):
+	# read-parse YAML
+	with open('bitbucket-pipelines.yml', 'r') as stream:
+		cfg = yaml.load(stream)
+
+	# search for an appropriate block in YAML
+	# this should be providen
+	# 1. searching in tags
+	# 2. searching in named branches
+	# 3. take default
+	cfgFound = False
+	deployCfg = None
+
+	if currentTag:
+		deployCfg = pipelenesSearchDeploySettingsInBlock(cfg['pipelines']['tags'], currentTag)
+		if deployCfg:
+			cfgFound = True
+	elif currentBranch:
+		deployCfg = pipelenesSearchDeploySettingsInBlock(cfg['pipelines']['branches'], currentBranch)
+		if deployCfg:
+			cfgFound = True
+
+	if not cfgFound:
+		deployCfg = pipelenesSearchDeploySettingsInSteps(cfg['pipelines']['default'], currentBranch)
+
+	return deployCfg
+
+
 def outhr(c='-'):
 	print (c * 40)
 
 
-if __name__ == "__main__":
+def deployPrepareFileList(fileCfg, baseDir):
+	result = dict()
 
-	if useDotEnv:
+	if not fileCfg:
+		raise DeployError('No files to deploy in the config. Please, define proper `file` section')
+
+	if isinstance(fileCfg, (basestring, int, long, bool)):
+		fn = str(fileCfg)
+		result[fn] = os.path.join(baseDir, fn)
+	elif isinstance(fileCfg, list):
+		for fn in fileCfg:
+			fn = str(fn)
+			result[fn] = os.path.join(baseDir, fn)
+	elif isinstance(fileCfg, dict):
+		for vname, fname in fileCfg.viewitems():
+			vname = str(vname)
+			fname = str(fname)
+			# MAKE SUBSTITUTION in filenames (fname, vname)
+			result[vname] = os.path.join(baseDir, fname)
+	else:
+		raise DeployError('Unknown format of `file` section')
+
+	return result
+
+
+def deploy():
+	if dotenv:
 		dotenv.load_dotenv('.env')
 
 	repoSlug = os.getenv('BITBUCKET_REPO_SLUG', None)
@@ -102,7 +212,7 @@ if __name__ == "__main__":
 
 	authUsingKey = not repoUser and not repoPwd and repoKey
 
-	if repoBranch is None:
+	if not repoBranch:
 		# probably, we are on tag, because BitBucket said:
 		# >>  This value is only available on branches.
 		# see: https://confluence.atlassian.com/bitbucket/environment-variables-in-bitbucket-pipelines-794502608.html#EnvironmentvariablesinBitbucketPipelines-Defaultvariables		# noqa: E501
@@ -118,9 +228,12 @@ if __name__ == "__main__":
 	print 'Auth      :', 'using repo key' if authUsingKey else 'using user credentials'
 	outhr()
 
-	files = {
-		'files': ('NetworkAutotune.py', open(os.path.join(repoCloneDir, 'NetworkAutotune.py'), 'rb'))
-	}
+	deployCfg = pipelinesSearchDeploySettings(repoTag, repoBranch)
+
+	# bug: should not use only first provider. but it is v0.2.0 and I am lazy...
+	deployCfg = deployCfg[0]
+
+	deployFileConfig = deployPrepareFileList(deployCfg['file'], repoCloneDir)
 
 	auth = None
 	if authUsingKey:
@@ -131,7 +244,16 @@ if __name__ == "__main__":
 	# API ref: https://developer.atlassian.com/bitbucket/api/2/reference/resource/repositories/%7Busername%7D/%7Brepo_slug%7D/downloads#post		# noqa: E501
 	url = 'https://api.bitbucket.org/2.0/repositories/{username}/{repo_slug}/downloads'.format(username=repoOwner, repo_slug=repoSlug)
 
-	response = requests.post(url, files=files, auth=auth)
+	try:
+		files = []
+		for vn, fn in deployFileConfig.viewitems():
+			files.append( ('files', (vn, open(fn, 'rb') ) ) )
+
+		response = requests.post(url, files=files, auth=auth)
+	finally:
+		for f in files:
+			f[1][1].close()
+
 	if response.status_code not in (200, 201):
 		outhr('!')
 		print response.text
@@ -142,3 +264,7 @@ if __name__ == "__main__":
 	else:
 		print 'DONE'
 		outhr()
+
+
+if __name__ == "__main__":
+	deploy()

@@ -1,0 +1,40 @@
+# This is a sample build configuration for Python.
+# Check our guides at https://confluence.atlassian.com/x/VYk8Lw for more examples.
+# Only use spaces to indent your .yml configuration.
+# -----
+# You can specify a custom docker image from Docker Hub as your build environment.
+#
+# https://confluence.atlassian.com/bitbucket/configure-bitbucket-pipelines-yml-792298910.html
+# SAMPLES:
+# https://confluence.atlassian.com/bitbucket/examples-of-integrations-for-bitbucket-pipelines-818579233.html
+---
+image: python:2.7
+pipelines:
+  default:
+    - step:
+        script:
+          #- pip install -U tox
+          - pip install -r requirements-dev.txt -q
+          - pip install -r requirements.txt -t libs -q
+
+          - pip --version
+          - flake8 --version
+          - pytest --version
+          #- tox --version
+
+          - PYTHONPATH=libs pytest
+          - flake8
+          - ./PipelinesDeployBitbucket.py
+  tags:
+    '**':
+      - step:
+          script:
+            - pip --version
+            - pip install -r requirements-dev.txt -q
+            - ./PipelinesDeployBitbucket.py
+      - deploy:
+          - provider: bitbucket-downloads
+            file:
+              nt.py: NetworkAutotune.py
+              bt.py: NetworkAutotune.py
+...
