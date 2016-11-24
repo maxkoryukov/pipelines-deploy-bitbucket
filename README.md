@@ -1,2 +1,3 @@
-# pipelines-deploy-bitbucket
-Simple deployment script from Bitbucket Pipelines to Bitbucket Downloads
+# python-pipelines-deploy
+
+Python script which provides the deploy-functionality for Bitbucket's Pipelines
