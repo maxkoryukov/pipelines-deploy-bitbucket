@@ -37,10 +37,10 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
 THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
+import pytest
 import PipelinesDeployBitbucket as srcmod
 
 
-import pytest
 @pytest.mark.parametrize('glob, name, exp', [
 	('*', 'a',      True),
 	('*', 'a/b',    False),
@@ -76,4 +76,4 @@ import pytest
 ])
 def test_pipelinesGlobMatch(glob, name, exp):
 	act = srcmod.pipelinesGlobMatch(glob, name)
-	assert act==exp, 'glob "' + glob + '" against "' + name + '"'
+	assert act == exp, 'glob "' + glob + '" against "' + name + '"'
